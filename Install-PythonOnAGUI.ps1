@@ -5,8 +5,8 @@
 .DESCRIPTION
     Designed to run on the Skillable A-GUI Windows VM. Installs Python 3.13 (if
     not already present), pins required pip packages including the Check Point
-    Management API Python SDK (cpapi), and downloads the toolkit's Python files
-    to C:\CCAS-Python.
+    Management API Python SDK (cp-mgmt-api-sdk), and downloads the toolkit's
+    Python files to C:\CCAS-Python.
 
     Skillable VMs are Hyper-V on Intel Xeon Gold 6330 (x86-64), so the installer
     pulls the amd64 build.
@@ -86,7 +86,7 @@ function Install-PipPackages {
 
     py -3 -m pip install --upgrade pip
     py -3 -m pip install --upgrade `
-        cpapi `
+        cp-mgmt-api-sdk `
         requests `
         urllib3 `
         python-dotenv `
@@ -126,9 +126,9 @@ function Show-NextSteps {
     cd $WorkDir
     copy .env.example .env
     notepad .env                  # set CP_MGMT_HOST and credentials
-    py -3 lab_example.py          # run the Lab 3A-3 equivalent
+    py -3 lab_example.py          # run the self-contained smoke test
 
-  Or run the smoke-test in mgmt_api.py directly:
+  Or run the built-in test in mgmt_api.py directly:
 
     py -3 mgmt_api.py --host 10.1.1.101
 
