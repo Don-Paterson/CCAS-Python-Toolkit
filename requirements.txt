@@ -1,0 +1,6 @@
+cpapi
+requests
+urllib3
+python-dotenv
+tabulate
+colorama
