@@ -186,9 +186,14 @@ class LabAPIClient:
         fd, self._session_file = tempfile.mkstemp(prefix="cpsess_", suffix=".txt")
         os.close(fd)
 
-        cmd = [self.mgmt_cli, "login", "--management", self.host]
+        # IMPORTANT: mgmt_cli wants global flags (--management, -d, --format,
+        # --port) BEFORE the subcommand. Local args for the subcommand come
+        # after it. Matches the courseware:
+        #     mgmt_cli --format json --management "10.1.1.101" login api-key "..."
+        cmd = [self.mgmt_cli, "--management", self.host]
         if self.domain:
             cmd.extend(["-d", self.domain])
+        cmd.append("login")
 
         if api_key:
             cmd.extend(["api-key", api_key])
@@ -279,11 +284,14 @@ class LabAPIClient:
 
         Returns (success, parsed_json). On failure, prints a `Failed: ...`
         line unless `quiet` is True.
+
+        Global flags (-s, --format) come BEFORE the subcommand, then the
+        subcommand, then its payload args. Matches the bash_api convention.
         """
         if self._session_file is None:
             raise RuntimeError("Not logged in")
 
-        cmd = [self.mgmt_cli, command, "-s", self._session_file, "--format", "json"]
+        cmd = [self.mgmt_cli, "-s", self._session_file, "--format", "json", command]
         cmd.extend(_payload_to_args(payload))
 
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
