@@ -3,13 +3,16 @@
     Installs Python 3.13 and the CCAS Python Toolkit on a Skillable A-GUI lab VM.
 
 .DESCRIPTION
-    Designed to run on the Skillable A-GUI Windows VM. Installs Python 3.13 (if
-    not already present), pins required pip packages including the Check Point
-    Management API Python SDK (cp-mgmt-api-sdk), and downloads the toolkit's
-    Python files to C:\CCAS-Python.
+    Designed to run on the Skillable A-GUI Windows VM. Installs Python 3.13
+    (if not already present), installs python-dotenv, and downloads the
+    toolkit's Python files to C:\CCAS-Python.
 
-    Skillable VMs are Hyper-V on Intel Xeon Gold 6330 (x86-64), so the installer
-    pulls the amd64 build.
+    The toolkit shells out to mgmt_cli.exe (shipped with SmartConsole) rather
+    than using an SDK, so the installer also verifies mgmt_cli.exe is locatable
+    and prints its full path for reference.
+
+    Skillable VMs are Hyper-V on Intel Xeon Gold 6330 (x86-64), so the
+    installer pulls the amd64 build.
 
     Intended to be invoked via:
         irm https://raw.githubusercontent.com/Don-Paterson/CCAS-Python-Toolkit/main/Install-PythonOnAGUI.ps1 | iex
@@ -28,7 +31,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProgressPreference    = "SilentlyContinue"   # makes Invoke-WebRequest noticeably faster
+$ProgressPreference    = "SilentlyContinue"
 
 function Write-Section($msg) {
     Write-Host ""
@@ -71,7 +74,7 @@ function Install-Python {
 
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
 
-    # Refresh PATH in the current PS session (so py.exe is found below)
+    # Refresh PATH for the current session so py.exe is findable
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
                 [System.Environment]::GetEnvironmentVariable("Path","User")
 
@@ -82,16 +85,39 @@ function Install-Python {
 }
 
 function Install-PipPackages {
-    Write-Section "Installing Python packages (Check Point SDK + helpers)"
+    Write-Section "Installing python-dotenv"
 
     py -3 -m pip install --upgrade pip
-    py -3 -m pip install --upgrade `
-        cp-mgmt-api-sdk `
-        requests `
-        urllib3 `
-        python-dotenv `
-        tabulate `
-        colorama
+    py -3 -m pip install --upgrade python-dotenv
+}
+
+function Find-MgmtCli {
+    Write-Section "Locating mgmt_cli.exe (ships with SmartConsole)"
+
+    $onPath = Get-Command mgmt_cli.exe -ErrorAction SilentlyContinue
+    if ($onPath) {
+        Write-Host "mgmt_cli.exe found on PATH: $($onPath.Source)" -ForegroundColor Green
+        return
+    }
+
+    $smartConsoleBase = "C:\Program Files (x86)\CheckPoint\SmartConsole"
+    if (Test-Path $smartConsoleBase) {
+        $hits = Get-ChildItem $smartConsoleBase -Filter "mgmt_cli.exe" -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object -Property FullName -Descending
+        if ($hits) {
+            $found = $hits[0]
+            Write-Host "Found at:  $($found.FullName)" -ForegroundColor Green
+            Write-Host ""
+            Write-Host "Not on PATH. Either add this directory to PATH:" -ForegroundColor Yellow
+            Write-Host "  $($found.DirectoryName)" -ForegroundColor Yellow
+            Write-Host "...or set CP_MGMT_CLI to the full executable path in your .env" -ForegroundColor Yellow
+            return
+        }
+    }
+
+    Write-Warning "mgmt_cli.exe was not found."
+    Write-Warning "Install SmartConsole (CCAS Lab 2A) before running the toolkit, or"
+    Write-Warning "set CP_MGMT_CLI to the full executable path manually."
 }
 
 function Get-ToolkitFiles {
@@ -128,7 +154,7 @@ function Show-NextSteps {
     notepad .env                  # set CP_MGMT_HOST and credentials
     py -3 lab_example.py          # run the self-contained smoke test
 
-  Or run the built-in test in mgmt_api.py directly:
+  Or run the smoke test in mgmt_api.py directly:
 
     py -3 mgmt_api.py --host 10.1.1.101
 
@@ -145,5 +171,6 @@ if (Test-PythonOK) {
 }
 
 Install-PipPackages
+Find-MgmtCli
 Get-ToolkitFiles
 Show-NextSteps
