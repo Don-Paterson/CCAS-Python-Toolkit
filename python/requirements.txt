@@ -1,6 +1,1 @@
-cp-mgmt-api-sdk
-requests
-urllib3
 python-dotenv
-tabulate
-colorama
