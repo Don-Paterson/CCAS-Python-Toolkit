@@ -6,36 +6,43 @@ than from the A-SMS expert shell.
 
 ## What this is
 
-`bash_api.sh` (and its `bash_api_v4.sh` evolution in this repo) is a thin
-wrapper that lets students batch up Check Point Management API calls from the
-SMS expert shell, auto-publishing every 80 successful changes. It's the
-standard pattern taught from CCAS Lab 3A onwards.
+`bash_api.sh` (and its `bash_api_v4.sh` evolution in this repo) is a thin bash
+wrapper around `mgmt_cli` that lets students batch up Check Point Management
+API calls from the SMS expert shell, auto-publishing every 80 successful
+changes. It's the standard pattern taught from CCAS Lab 3A onwards.
 
-This toolkit ports that exact pattern to Python so the same lab objectives can
-be carried out from the A-GUI Windows VM. Same publish-every-80 batching, same
-`Success 1.1 / 1.2 / ...` output format, same notion of named sessions — but
-driven via the official Check Point Management API Python SDK (`cpapi`) rather
-than `mgmt_cli` shell calls.
+This toolkit is the Python counterpart: a thin Python wrapper around
+`mgmt_cli.exe` (which ships with SmartConsole on A-GUI) that uses the same
+session-file pattern, the same publish-every-80 batching, and the same
+`Success 1.1 / 1.2 / ...` output format as the bash version. The commands
+themselves are unchanged — `add-host`, `add-group`, `set-network`, etc. are
+exactly the same names students learn in the labs.
 
 Useful when:
 
   - You want the automation workflow to live on A-GUI instead of A-SMS
-  - You want to script Check Point automation from a non-Gaia host
-  - You want a Python base to extend (native JSON / dict handling, easy
-    integration with `requests`, `pandas`, etc.)
+  - You want Python's orchestration features (loops, conditionals, error
+    handling, integration with other libraries) without leaving the
+    courseware's command vocabulary
+  - You want a tool that aligns with what most Check Point customers
+    actually run in production — `mgmt_cli` plus a scripting layer — rather
+    than introducing an SDK-based parallel universe
 
 ## Prerequisites
 
-  - A Check Point R81.x or R82 Security Management Server reachable over the
-    Management API (TCP/443 by default, TCP/4434 if AppCtrl/URLF are enabled
-    on the SMS)
+  - A Check Point R81.x or R82 Security Management Server reachable over
+    the Management API (TCP/443 by default, TCP/4434 if AppCtrl/URLF are
+    enabled on the SMS)
   - An API user on the SMS, or an API key issued by an admin
-  - The Management API enabled for "All IP addresses" or at least the A-GUI
-    IP — this is what Lab 2A-2 (`api restart`) is for in the CCAS curriculum
-  - A Windows lab VM (Skillable A-GUI or equivalent) with internet access for
-    the initial install
+  - The Management API enabled for "All IP addresses" or at least the
+    A-GUI IP — Lab 2A-2 (`api restart`) in the CCAS curriculum
+  - **SmartConsole installed on A-GUI** — provides `mgmt_cli.exe`. This is
+    done in Lab 2A of the CCAS course; if you're using this toolkit on a
+    fresh A-GUI image you'll need SmartConsole in place first.
+  - Windows lab VM with internet access for the initial install (only)
 
-The installer handles Python itself, the pip packages, and the toolkit files.
+The installer handles Python and the toolkit files. Python's only external
+dependency is `python-dotenv`, used optionally for loading `.env` files.
 
 ## Quick install (irm | iex)
 
@@ -45,38 +52,41 @@ On A-GUI, in an elevated PowerShell:
 irm https://raw.githubusercontent.com/Don-Paterson/CCAS-Python-Toolkit/main/Install-PythonOnAGUI.ps1 | iex
 ```
 
-This:
+The installer:
 
   1. Installs Python 3.13 (amd64) silently from python.org if it isn't already
      present at version 3.11 or higher
-  2. Updates pip
-  3. Installs `cpapi`, `requests`, `urllib3`, `python-dotenv`, `tabulate`,
-     `colorama`
+  2. Updates pip and installs `python-dotenv`
+  3. Locates `mgmt_cli.exe` (checks PATH, then walks the SmartConsole
+     install tree) and reports the path
   4. Downloads `mgmt_api.py`, `lab_example.py`, `requirements.txt`, and
      `.env.example` into `C:\CCAS-Python\`
 
 ## Manual install
 
-If you'd rather do it by hand:
-
 ```powershell
-py -3 -m pip install -r https://raw.githubusercontent.com/Don-Paterson/CCAS-Python-Toolkit/main/python/requirements.txt
+py -3 -m pip install python-dotenv
 git clone https://github.com/Don-Paterson/CCAS-Python-Toolkit C:\CCAS-Python
 cd C:\CCAS-Python\python
 ```
 
+`mgmt_cli.exe` must be either on `PATH` or pointed to by the `CP_MGMT_CLI`
+environment variable; otherwise the toolkit auto-detects it under
+`C:\Program Files (x86)\CheckPoint\SmartConsole\*\PROGRAM\`.
+
 ## Configuration
 
-The toolkit reads credentials and the management IP from either environment
-variables or a `.env` file in the current directory:
+The toolkit reads settings from either environment variables or a `.env`
+file in the current directory:
 
-| Variable           | Purpose                                                  |
-|--------------------|----------------------------------------------------------|
-| `CP_MGMT_HOST`     | Management server IP / hostname (default `10.1.1.101`)   |
-| `CP_MGMT_USER`     | API username                                             |
-| `CP_MGMT_PASS`     | API password                                             |
-| `CP_MGMT_API_KEY`  | API key (alternative to username / password)             |
-| `CP_MGMT_DOMAIN`   | MDS / Multi-Domain domain name (omit on a standalone SMS) |
+| Variable           | Purpose                                                          |
+|--------------------|------------------------------------------------------------------|
+| `CP_MGMT_HOST`     | Management server IP / hostname (default `10.1.1.101`)           |
+| `CP_MGMT_USER`     | API username                                                     |
+| `CP_MGMT_PASS`     | API password                                                     |
+| `CP_MGMT_API_KEY`  | API key (alternative to username / password)                     |
+| `CP_MGMT_DOMAIN`   | MDS / Multi-Domain domain name (omit on a standalone SMS)        |
+| `CP_MGMT_CLI`      | Full path to `mgmt_cli.exe` (overrides auto-detection)           |
 
 Set up the `.env`:
 
@@ -93,15 +103,14 @@ the username and password (password input is masked via `getpass`).
 
 ### Smoke test
 
-The simplest check that everything works end-to-end:
+The simplest end-to-end check:
 
 ```powershell
 py -3 mgmt_api.py
 ```
 
-This logs in, adds a host called `python_api_host` (3.3.3.3, pink) using
-`set-if-exists` so it's idempotent, publishes, and logs out. Open
-SmartConsole afterwards to verify it appears.
+This logs in, adds a host called `python_api_host` (3.3.3.3, pink), publishes,
+and logs out. Open SmartConsole afterwards to verify it appears.
 
 You can override the target SMS at the command line:
 
@@ -110,21 +119,36 @@ py -3 mgmt_api.py --host 192.168.11.101
 py -3 mgmt_api.py --host 10.1.1.101 --domain "Bravo_Domain"
 ```
 
-### Lab 3A-3 example
+### Lab example
 
-`lab_example.py` replicates Lab 3A-3 (Alpha-Nets group, SecurityGateways
-group, LDAP-Services service group). Run it after the host and network
-objects from Labs 3A-1 and 3A-2 already exist:
+`lab_example.py` creates three test hosts and a group containing them — same
+pattern as the `mgmtCmd add host ...` sequences in the courseware:
 
 ```powershell
 py -3 lab_example.py
 ```
 
+Expected output:
+
+```
+Success 1.1
+Success 1.2
+Success 1.3
+Success 1.4
+```
+
+In SmartConsole afterwards: `Test-host-1`, `Test-host-2`, `Test-host-3` and
+`Test-hosts-group`, all in `crete blue`.
+
+To re-run, delete the four objects from SmartConsole first (the example
+follows the courseware "run once on a fresh management" pattern; it
+deliberately does not include idempotency machinery).
+
 ### Writing your own script
 
-Use `LabAPIClient` as a context manager. Every `mgmt_cmd()` call is one
-Management API call. Publishes happen automatically every 80 successful
-changes, and the context manager publishes and logs out on exit.
+Use `LabAPIClient` as a context manager. Every `mgmt_cmd()` call invokes
+`mgmt_cli` once under the hood. Publishes happen automatically every 80
+successful changes, and the context manager publishes and logs out on exit.
 
 Minimal example:
 
@@ -182,6 +206,24 @@ with LabAPIClient(
     ...
 ```
 
+### Lists in payloads
+
+Python list values are auto-expanded into mgmt_cli's indexed form:
+
+```python
+api.mgmt_cmd("add-group", {
+    "members": ["A-HOST", "B-HOST", "C-HOST"],
+})
+```
+
+invokes mgmt_cli as if you'd typed:
+
+```
+mgmt_cli add-group ... members.1 A-HOST members.2 B-HOST members.3 C-HOST
+```
+
+— exactly the syntax from the `bash_api.sh` examples in master.txt.
+
 ### Output format
 
 Every successful `mgmt_cmd` prints:
@@ -190,18 +232,18 @@ Every successful `mgmt_cmd` prints:
 Success <batch>.<count>
 ```
 
-So you get `Success 1.1`, `Success 1.2`, ... `Success 1.80`, then a publish,
-then `Success 2.1` and the second batch begins. This matches the bash version
+So `Success 1.1`, `Success 1.2`, ... `Success 1.80`, then a publish, then
+`Success 2.1` and the second batch begins. This matches the bash version
 exactly so log output is directly comparable.
 
 Failures print:
 
 ```
-Failed: <command> <payload>  (<error message from SDK>)
+Failed: <command> <payload>  (<error message from mgmt_cli>)
 ```
 
-The script continues on failure rather than aborting — same as the bash. If
-you'd rather abort on the first error, wrap the call:
+The script continues on failure rather than aborting — same as the bash.
+To abort on the first error:
 
 ```python
 if not api.mgmt_cmd("add-host", {...}):
@@ -216,14 +258,18 @@ if not api.mgmt_cmd("add-host", {...}):
 | `publish` function             | `api.publish()`                         |
 | `login` / `logout` functions   | `with LabAPIClient() as api:`           |
 | `publishEvery=80`              | `LabAPIClient(publish_every=80)`        |
-| `apiPort=$(api status ...)`    | Handled by the SDK                      |
-| Session cookie file            | In-memory SID inside the SDK            |
+| `apiPort=$(api status ...)`    | `mgmt_cli` handles port selection       |
+| Session cookie file            | Same — a temp file, cleaned up on exit  |
 | `./bash_api_v4.sh "Domain"`    | `LabAPIClient(domain="Domain")`         |
+
+Both versions ultimately invoke `mgmt_cli` against the same Management API.
+The Python layer adds dict-style payload construction, auto-expansion of
+list parameters, JSON parsing of errors, and context-manager safety.
 
 ## MDS / Multi-Domain
 
 Pass `domain="<Domain_Name>"` to `LabAPIClient`, or set `CP_MGMT_DOMAIN`. The
-SDK login then targets that domain instead of the global MDS.
+mgmt_cli invocation adds `-d <Domain_Name>` at login.
 
 ```python
 with LabAPIClient(host="10.1.1.101", domain="Alpha_Domain") as api:
@@ -232,17 +278,10 @@ with LabAPIClient(host="10.1.1.101", domain="Alpha_Domain") as api:
 
 ## Troubleshooting
 
-**`Missing dependency: cpapi`**
-The PyPI package name has wandered over time. Try `pip install cpapi`. If
-that resolves to nothing useful or a stale version, check the current name
-at <https://github.com/CheckPointSW/cp_mgmt_api_python_sdk>.
-
-**Login fails with "fingerprint" / TLS errors**
-The SDK is invoked with `unsafe=True, unsafe_auto_accept=True` so a
-self-signed cert is accepted automatically. If you still see fingerprint
-errors, there's probably an HTTPS Inspection-capable gateway between A-GUI
-and the SMS interfering with TLS. Disable HI for the test, or target the
-SMS's management IP that bypasses the inspecting gateway.
+**`mgmt_cli executable not found`**
+SmartConsole isn't installed, or the install is in an unusual location.
+Either install SmartConsole (CCAS Lab 2A) or set `CP_MGMT_CLI` to the
+full executable path in your `.env`.
 
 **Login fails with "unauthorized"**
 Confirm in SmartConsole that the API user has appropriate permissions
@@ -251,24 +290,34 @@ operations you're calling). On a fresh lab: make sure `api restart` was
 run after creating the API user (Lab 2A-2).
 
 **Calls time out**
-The SDK defaults to port 443. If AppCtrl/URLF blades are enabled on the
-SMS, the API moves to port 4434 — pass `port=4434` to `APIClientArgs`
-inside `mgmt_api.py`, or expose it through `LabAPIClient` as a constructor
-argument in your own fork.
+mgmt_cli defaults to port 443. If AppCtrl/URLF blades are enabled on the
+SMS, the API moves to port 4434 — pass `--port 4434` via the
+`CP_MGMT_HOST` setup or add a `port` parameter to the mgmt_cli command
+line in `mgmt_api.py`.
 
 **`Failed: <command> ...` on a known-good command**
 Check the error message in parentheses. Most common causes:
 referenced object doesn't exist (typo, or commands ran out of order), or
-the object already exists and you didn't pass `"set-if-exists": True`.
+the parameter isn't valid for that command in this R-version (e.g.
+`set-if-exists` isn't accepted on `add-group` in some R82 builds).
+
+**`Login failed: ...`**
+Usually credentials, but also check that A-GUI can actually reach the SMS
+on the API port. `Test-NetConnection 10.1.1.101 -Port 443` from
+PowerShell is a fast way to confirm.
 
 ## Notes
 
-  - The SDK is invoked with `unsafe=True, unsafe_auto_accept=True` for lab
-    convenience. Production deployments should pin fingerprints properly.
   - Designed for Skillable A-GUI (Hyper-V, Intel Xeon Gold 6330, x86-64);
     the installer downloads the amd64 Python build accordingly.
   - The bash-side companion `bash_api_v4.sh` is included in this repo for
     cross-reference and for tasks that still need to run on A-SMS itself.
+  - The toolkit's only Python dependency is `python-dotenv` (and that's
+    optional — env vars work fine without it). Everything else is the
+    standard library.
+  - `mgmt_cli.exe` invocations happen with `--format json` so error
+    messages come back parseable; success output is suppressed for clean
+    `Success x.y` summaries. Adjust in `_run()` if you want verbose output.
 
 ## License
 
