@@ -3,7 +3,7 @@
 Smoke test for the CCAS Python Toolkit.
 
 Creates three test hosts and a group containing them, mirroring the standard
-mgmt_cli pattern from the courseware. One add per object.
+mgmt_cli pattern from the courseware. One add per object, no idempotency.
 
 Run on a fresh management. If the objects already exist, delete them in
 SmartConsole first.
