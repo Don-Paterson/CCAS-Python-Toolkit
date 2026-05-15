@@ -60,7 +60,7 @@ The installer:
   3. Locates `mgmt_cli.exe` (checks PATH, then walks the SmartConsole
      install tree) and reports the path
   4. Downloads `mgmt_api.py`, `lab_example.py`, `requirements.txt`, and
-     `.env.example` into `C:\CCAS-Python\`
+     `env.example.txt` into `C:\CCAS-Python\`
 
 ## Manual install
 
@@ -92,7 +92,7 @@ Set up the `.env`:
 
 ```powershell
 cd C:\CCAS-Python
-copy .env.example .env
+copy env.example.txt .env
 notepad .env
 ```
 
@@ -283,28 +283,34 @@ SmartConsole isn't installed, or the install is in an unusual location.
 Either install SmartConsole (CCAS Lab 2A) or set `CP_MGMT_CLI` to the
 full executable path in your `.env`.
 
-**Login fails with "unauthorized"**
-Confirm in SmartConsole that the API user has appropriate permissions
-(typically `Read/Write All`, or a custom profile that includes the
-operations you're calling). On a fresh lab: make sure `api restart` was
-run after creating the API user (Lab 2A-2).
+**Login fails with "unauthorized" / "err_login_failed"**
+Confirm credentials at the shell first:
+
+```powershell
+& "C:\Program Files (x86)\CheckPoint\SmartConsole\R82\PROGRAM\mgmt_cli.exe" --management 10.1.1.101 login user admin password "Chkp!234"
+```
+
+If that works, the toolkit will too. If not, confirm in SmartConsole that
+the API user has appropriate permissions, and on a fresh lab make sure
+`api restart` was run after creating the API user (Lab 2A-2).
 
 **Calls time out**
 mgmt_cli defaults to port 443. If AppCtrl/URLF blades are enabled on the
-SMS, the API moves to port 4434 — pass `--port 4434` via the
-`CP_MGMT_HOST` setup or add a `port` parameter to the mgmt_cli command
-line in `mgmt_api.py`.
+SMS, the API moves to port 4434. Add a `--port 4434` arg to the mgmt_cli
+invocations in `mgmt_api.py`, or set it via the `CP_MGMT_HOST` shape.
 
 **`Failed: <command> ...` on a known-good command**
-Check the error message in parentheses. Most common causes:
-referenced object doesn't exist (typo, or commands ran out of order), or
-the parameter isn't valid for that command in this R-version (e.g.
-`set-if-exists` isn't accepted on `add-group` in some R82 builds).
+Check the error message in parentheses. Most common causes: referenced
+object doesn't exist (typo or commands ran out of order), or the parameter
+isn't valid for that command in this R-version (e.g. `set-if-exists` isn't
+accepted on `add-group` in some R82 builds).
 
-**`Login failed: ...`**
-Usually credentials, but also check that A-GUI can actually reach the SMS
-on the API port. `Test-NetConnection 10.1.1.101 -Port 443` from
-PowerShell is a fast way to confirm.
+**Connectivity check**
+From PowerShell on A-GUI:
+
+```powershell
+Test-NetConnection 10.1.1.101 -Port 443
+```
 
 ## Notes
 
@@ -312,12 +318,14 @@ PowerShell is a fast way to confirm.
     the installer downloads the amd64 Python build accordingly.
   - The bash-side companion `bash_api_v4.sh` is included in this repo for
     cross-reference and for tasks that still need to run on A-SMS itself.
-  - The toolkit's only Python dependency is `python-dotenv` (and that's
-    optional — env vars work fine without it). Everything else is the
-    standard library.
+  - The toolkit's only Python dependency is `python-dotenv` (optional —
+    env vars work fine without it). Everything else is the standard library.
   - `mgmt_cli.exe` invocations happen with `--format json` so error
-    messages come back parseable; success output is suppressed for clean
-    `Success x.y` summaries. Adjust in `_run()` if you want verbose output.
+    messages come back parseable. Adjust in `_run()` if you want verbose
+    success output.
+  - The seed credentials file is named `env.example.txt` rather than
+    `.env.example` to avoid AV/proxy filtering on the `.env` substring and
+    PowerShell IWR's known issues with leading-dot files.
 
 ## License
 

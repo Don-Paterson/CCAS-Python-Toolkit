@@ -131,7 +131,7 @@ function Get-ToolkitFiles {
         "python/mgmt_api.py",
         "python/lab_example.py",
         "python/requirements.txt",
-        "python/.env.example"
+        "python/env.example.txt"
     )
     foreach ($f in $files) {
         $url  = "$RepoRawBase/$f"
@@ -150,7 +150,7 @@ function Show-NextSteps {
     Write-Host @"
 
     cd $WorkDir
-    copy .env.example .env
+    copy env.example.txt .env
     notepad .env                  # set CP_MGMT_HOST and credentials
     py -3 lab_example.py          # run the self-contained smoke test
 
