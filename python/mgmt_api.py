@@ -19,6 +19,13 @@ The Python layer adds:
   - --format json output parsing on every command
   - A context manager for safe session lifecycle
 
+The command name accepted by mgmt_cmd() may be in either form:
+
+    api.mgmt_cmd("add host",  {...})     # courseware/bash form
+    api.mgmt_cmd("add-host",  {...})     # API wire form
+
+Both are tokenised and passed through to mgmt_cli, which accepts either.
+
 No SDK dependency. mgmt_cli.exe must be installed (it ships with SmartConsole).
 
 Environment variables (optional - prompted otherwise):
@@ -147,7 +154,7 @@ class LabAPIClient:
     patterns. Used as a context manager:
 
         with LabAPIClient(host="10.1.1.101") as api:
-            api.mgmt_cmd("add-host", {"name": "h1", "ip-address": "1.2.3.4"})
+            api.mgmt_cmd("add host", {"name": "h1", "ip-address": "1.2.3.4"})
     """
 
     def __init__(
@@ -186,9 +193,8 @@ class LabAPIClient:
         fd, self._session_file = tempfile.mkstemp(prefix="cpsess_", suffix=".txt")
         os.close(fd)
 
-        # IMPORTANT: mgmt_cli wants global flags (--management, -d, --format,
-        # --port) BEFORE the subcommand. Local args for the subcommand come
-        # after it. Matches the courseware:
+        # Global flags (--management, -d) before the subcommand, matching the
+        # courseware:
         #     mgmt_cli --format json --management "10.1.1.101" login api-key "..."
         cmd = [self.mgmt_cli, "--management", self.host]
         if self.domain:
@@ -221,7 +227,7 @@ class LabAPIClient:
             f.write(result.stdout)
 
         # Name and describe the session (setupSession in bash)
-        self._run("set-session", {
+        self._run("set session", {
             "new-name":    self.session_name,
             "description": self.session_description,
         }, quiet=True)
@@ -249,6 +255,9 @@ class LabAPIClient:
         """
         Run a single mgmt_cli command. Mirrors mgmtCmd() in bash_api_v4.sh.
 
+        The command may be in either the courseware form ("add host") or
+        the API wire form ("add-host"). Both work.
+
         Returns True on success, False on failure. Auto-publishes every
         `publish_every` successful changes.
         """
@@ -262,7 +271,7 @@ class LabAPIClient:
         if self.change_count > self.publish_every:
             print("Publishing...")
             self.publish()
-            self._run("set-session", {
+            self._run("set session", {
                 "new-name":    self.session_name,
                 "description": self.session_description,
             }, quiet=True)
@@ -285,13 +294,15 @@ class LabAPIClient:
         Returns (success, parsed_json). On failure, prints a `Failed: ...`
         line unless `quiet` is True.
 
-        Global flags (-s, --format) come BEFORE the subcommand, then the
-        subcommand, then its payload args. Matches the bash_api convention.
+        The command string is tokenised on whitespace, so both "add host" and
+        "add-host" expand correctly. Global flags (-s, --format) come BEFORE
+        the subcommand tokens, then payload args.
         """
         if self._session_file is None:
             raise RuntimeError("Not logged in")
 
-        cmd = [self.mgmt_cli, "-s", self._session_file, "--format", "json", command]
+        cmd = [self.mgmt_cli, "-s", self._session_file, "--format", "json"]
+        cmd.extend(command.split())
         cmd.extend(_payload_to_args(payload))
 
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -353,7 +364,7 @@ if __name__ == "__main__":
     args = _parse_args()
     with LabAPIClient(host=args.host, domain=args.domain) as api:
         # Single smoke-test command
-        api.mgmt_cmd("add-host", {
+        api.mgmt_cmd("add host", {
             "name":       "python_api_host",
             "ip-address": "3.3.3.3",
             "color":      "pink",

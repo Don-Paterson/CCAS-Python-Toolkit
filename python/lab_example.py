@@ -18,28 +18,28 @@ from mgmt_api import LabAPIClient
 def main():
     with LabAPIClient() as api:
 
-        api.mgmt_cmd("add-host", {
+        api.mgmt_cmd("add host", {
             "name":       "Test-host-1",
             "ip-address": "192.168.99.201",
             "color":      "crete blue",
             "comments":   "Created by python automation test script",
         })
 
-        api.mgmt_cmd("add-host", {
+        api.mgmt_cmd("add host", {
             "name":       "Test-host-2",
             "ip-address": "192.168.99.202",
             "color":      "crete blue",
             "comments":   "Created by python automation test script",
         })
 
-        api.mgmt_cmd("add-host", {
+        api.mgmt_cmd("add host", {
             "name":       "Test-host-3",
             "ip-address": "192.168.99.203",
             "color":      "crete blue",
             "comments":   "Created by python automation test script",
         })
 
-        api.mgmt_cmd("add-group", {
+        api.mgmt_cmd("add group", {
             "name":     "Test-hosts-group",
             "comments": "Group of test hosts",
             "color":    "crete blue",
