@@ -1,4 +1,4 @@
-cpapi
+cp-mgmt-api-sdk
 requests
 urllib3
 python-dotenv

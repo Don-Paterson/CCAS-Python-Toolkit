@@ -1,58 +1,83 @@
 #!/usr/bin/env python3
 """
-CCAS Lab 3A-3 equivalent - run from A-GUI via Python.
+Self-contained smoke test for the CCAS Python Toolkit.
 
-The original lab task creates the Alpha-Nets group, the SecurityGateways
-group, and the LDAP-Services service group using the bash_api.sh wrapper
-on A-SMS. This script does the same job from the A-GUI Windows VM using
-the Python SDK.
+Creates a small set of clearly-marked test objects to prove the toolkit can
+log in, create objects, publish, and log out. Re-runnable thanks to
+'set-if-exists: true' on every call - no cleanup needed between runs.
 
-Pre-requisites:
-  - Install-PythonOnAGUI.ps1 has been run on this A-GUI
-  - .env contains CP_MGMT_HOST, CP_MGMT_USER, CP_MGMT_PASS (or rely on prompts)
-  - The host and network objects from Lab 3A-1 and 3A-2 already exist
+No dependencies on any previous lab step.
+
+Run:
+    py -3 lab_example.py
+
+Expected output:
+    Success 1.1
+    Success 1.2
+    Success 1.3
+    Success 1.4
+    Success 1.5
+    Publishing...
+
+Then open SmartConsole and look for five new objects coloured 'sea green'
+with names beginning 'PYTEST_':
+    - PYTEST_HOST_1, PYTEST_HOST_2, PYTEST_HOST_3 (hosts)
+    - PYTEST_NET                                  (network)
+    - PYTEST_GROUP                                (group containing all four)
+
+To remove the test objects when you're done, delete PYTEST_GROUP first, then
+the network and hosts, from SmartConsole.
 """
 
 from mgmt_api import LabAPIClient
 
 
+# A clear prefix and an unmistakable colour so the test objects are easy to
+# find and clean up in SmartConsole.
+PREFIX = "PYTEST_"
+COLOUR = "sea green"
+COMMENT = "Created by CCAS Python Toolkit smoke test"
+
+
 def main():
     with LabAPIClient() as api:
 
-        # /Create the Alpha-Nets group
-        api.mgmt_cmd("add-group", {
-            "name":     "Alpha-Nets",
-            "comments": "Alpha Corporation Headquarters Networks",
-            "color":    "crete blue",
-            "members":  ["A-DMZ-NET", "A-INT-NET", "A-MGMT-NET"],
+        # Three test hosts, in a deliberately non-overlapping subnet
+        for i in range(1, 4):
+            api.mgmt_cmd("add-host", {
+                "name":          f"{PREFIX}HOST_{i}",
+                "ip-address":    f"10.99.99.{i}",
+                "color":         COLOUR,
+                "comments":      COMMENT,
+                "set-if-exists": True,
+            })
+
+        # A test network covering the host range above
+        api.mgmt_cmd("add-network", {
+            "name":          f"{PREFIX}NET",
+            "subnet4":       "10.99.99.0",
+            "mask-length4":  24,
+            "color":         COLOUR,
+            "comments":      COMMENT,
+            "set-if-exists": True,
         })
 
-        # /Create the SecurityGateways group (empty for now - gateways added later)
+        # A group bundling everything created above. Members are referenced by
+        # name; they're visible inside this session even before the publish.
         api.mgmt_cmd("add-group", {
-            "name":     "SecurityGateways",
-            "comments": "Alpha Corporation Security Gateways",
-            "color":    "pink",
-        })
-
-        # /Create the LDAP-Services service group
-        api.mgmt_cmd("add-service-group", {
-            "name":     "LDAP-Services",
-            "comments": "LDAP Services Group",
-            "color":    "turquoise",
+            "name":          f"{PREFIX}GROUP",
             "members": [
-                "ALL_DCE_RPC",
-                "Kerberos_v5_TCP",
-                "Kerberos_v5_UDP",
-                "kerberos-udp",
-                "ldap",
-                "ldap-ssl",
-                "ldap_udp",
-                "smb",
-                "smb-udp",
+                f"{PREFIX}HOST_1",
+                f"{PREFIX}HOST_2",
+                f"{PREFIX}HOST_3",
+                f"{PREFIX}NET",
             ],
+            "color":         COLOUR,
+            "comments":      COMMENT,
+            "set-if-exists": True,
         })
 
-        # Implicit publish + logout happens via the context manager's __exit__
+        # Implicit publish + logout happens on __exit__
 
 
 if __name__ == "__main__":

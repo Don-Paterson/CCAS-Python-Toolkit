@@ -2,9 +2,9 @@
 """
 CCAS lab Management API helper - Python equivalent of bash_api_v4.sh.
 
-Uses the official Check Point Management API Python SDK (cpapi) to drive
-the same kind of automation as the bash version, but from the A-GUI lab
-VM (Windows) rather than from the SMS expert shell.
+Uses the official Check Point Management API Python SDK (cp-mgmt-api-sdk,
+imported as cpapi) to drive the same kind of automation as the bash version,
+but from the A-GUI lab VM (Windows) rather than from the SMS expert shell.
 
 Environment variables (optional - prompted otherwise):
     CP_MGMT_HOST     - Management server  (default: 10.1.1.101)
@@ -32,8 +32,8 @@ try:
     from cpapi import APIClient, APIClientArgs
 except ImportError:
     sys.exit(
-        "Missing dependency: cpapi.\n"
-        "Run:  py -3 -m pip install cpapi\n"
+        "Missing dependency: cp-mgmt-api-sdk (imported as cpapi).\n"
+        "Run:  py -3 -m pip install cp-mgmt-api-sdk\n"
         "(or rerun Install-PythonOnAGUI.ps1)"
     )
 
