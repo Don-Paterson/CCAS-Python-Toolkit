@@ -1,83 +1,50 @@
 #!/usr/bin/env python3
 """
-Self-contained smoke test for the CCAS Python Toolkit.
+Smoke test for the CCAS Python Toolkit.
 
-Creates a small set of clearly-marked test objects to prove the toolkit can
-log in, create objects, publish, and log out. Re-runnable thanks to
-'set-if-exists: true' on every call - no cleanup needed between runs.
+Creates three test hosts and a group containing them, mirroring the standard
+mgmt_cli pattern from the courseware. One add per object.
 
-No dependencies on any previous lab step.
+Run on a fresh management. If the objects already exist, delete them in
+SmartConsole first.
 
 Run:
     py -3 lab_example.py
-
-Expected output:
-    Success 1.1
-    Success 1.2
-    Success 1.3
-    Success 1.4
-    Success 1.5
-    Publishing...
-
-Then open SmartConsole and look for five new objects coloured 'sea green'
-with names beginning 'PYTEST_':
-    - PYTEST_HOST_1, PYTEST_HOST_2, PYTEST_HOST_3 (hosts)
-    - PYTEST_NET                                  (network)
-    - PYTEST_GROUP                                (group containing all four)
-
-To remove the test objects when you're done, delete PYTEST_GROUP first, then
-the network and hosts, from SmartConsole.
 """
 
 from mgmt_api import LabAPIClient
 
 
-# A clear prefix and an unmistakable colour so the test objects are easy to
-# find and clean up in SmartConsole.
-PREFIX = "PYTEST_"
-COLOUR = "sea green"
-COMMENT = "Created by CCAS Python Toolkit smoke test"
-
-
 def main():
     with LabAPIClient() as api:
 
-        # Three test hosts, in a deliberately non-overlapping subnet
-        for i in range(1, 4):
-            api.mgmt_cmd("add-host", {
-                "name":          f"{PREFIX}HOST_{i}",
-                "ip-address":    f"10.99.99.{i}",
-                "color":         COLOUR,
-                "comments":      COMMENT,
-                "set-if-exists": True,
-            })
-
-        # A test network covering the host range above
-        api.mgmt_cmd("add-network", {
-            "name":          f"{PREFIX}NET",
-            "subnet4":       "10.99.99.0",
-            "mask-length4":  24,
-            "color":         COLOUR,
-            "comments":      COMMENT,
-            "set-if-exists": True,
+        api.mgmt_cmd("add-host", {
+            "name":       "Test-host-1",
+            "ip-address": "192.168.99.201",
+            "color":      "crete blue",
+            "comments":   "Created by python automation test script",
         })
 
-        # A group bundling everything created above. Members are referenced by
-        # name; they're visible inside this session even before the publish.
+        api.mgmt_cmd("add-host", {
+            "name":       "Test-host-2",
+            "ip-address": "192.168.99.202",
+            "color":      "crete blue",
+            "comments":   "Created by python automation test script",
+        })
+
+        api.mgmt_cmd("add-host", {
+            "name":       "Test-host-3",
+            "ip-address": "192.168.99.203",
+            "color":      "crete blue",
+            "comments":   "Created by python automation test script",
+        })
+
         api.mgmt_cmd("add-group", {
-            "name":          f"{PREFIX}GROUP",
-            "members": [
-                f"{PREFIX}HOST_1",
-                f"{PREFIX}HOST_2",
-                f"{PREFIX}HOST_3",
-                f"{PREFIX}NET",
-            ],
-            "color":         COLOUR,
-            "comments":      COMMENT,
-            "set-if-exists": True,
+            "name":     "Test-hosts-group",
+            "comments": "Group of test hosts",
+            "color":    "crete blue",
+            "members":  ["Test-host-1", "Test-host-2", "Test-host-3"],
         })
-
-        # Implicit publish + logout happens on __exit__
 
 
 if __name__ == "__main__":
