@@ -156,6 +156,7 @@ function Get-ToolkitFiles {
     $files = @(
         "python/mgmt_api.py",
         "python/lab_example.py",
+        "python/lab_batch_example.py",
         "python/requirements.txt",
         "python/env.example.txt"
     )
@@ -177,8 +178,13 @@ function Show-NextSteps {
 
     cd $WorkDir
     copy env.example.txt .env
-    notepad .env                  # set CP_MGMT_HOST and credentials
-    py -3 lab_example.py          # run the self-contained smoke test
+    notepad .env                       # set CP_MGMT_HOST and credentials
+    py -3 lab_example.py               # self-contained smoke test (3 hosts + group)
+
+  Bulk-creation demos (20 hosts each):
+
+    py -3 lab_batch_example.py         # Python for-loop, one add per host
+    py -3 lab_batch_example.py --batch # native mgmt_cli --batch (one CSV, one call)
 
   Or run the smoke test in mgmt_api.py directly:
 

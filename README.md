@@ -59,8 +59,10 @@ The installer:
   2. Updates pip and installs `python-dotenv`
   3. Locates `mgmt_cli.exe` (checks PATH, then walks the SmartConsole
      install tree) and reports the path
-  4. Downloads `mgmt_api.py`, `lab_example.py`, `requirements.txt`, and
-     `env.example.txt` into `C:\CCAS-Python\`
+  4. Downloads `mgmt_api.py`, `lab_example.py`, `lab_batch_example.py`,
+     `requirements.txt`, and `env.example.txt` into `C:\CCAS-Python\`
+  5. Adds the `mgmt_cli.exe` directory to the machine `PATH` (when run
+     elevated) so the toolkit resolves it automatically
 
 ## Manual install
 
@@ -143,6 +145,50 @@ In SmartConsole afterwards: `Test-host-1`, `Test-host-2`, `Test-host-3` and
 To re-run, delete the four objects from SmartConsole first (the example
 follows the courseware "run once on a fresh management" pattern; it
 deliberately does not include idempotency machinery).
+
+### Bulk creation (loop vs native batch)
+
+`lab_batch_example.py` demonstrates the two ways to create many objects at
+once. Both create a group, then 20 hosts attached to it.
+
+```powershell
+py -3 lab_batch_example.py            # Python for-loop: one add per host
+py -3 lab_batch_example.py --batch    # native mgmt_cli --batch: one CSV, one call
+```
+
+The two are **not** equivalent in cost:
+
+  - **The loop** calls `mgmt_cmd("add host", {...})` once per object. It's the
+    readable, courseware-friendly translation of a bash `while` loop, but it's
+    still one `mgmt_cli.exe` process and one API call per host.
+  - **`--batch`** hands a whole CSV to a single `mgmt_cli add host --batch
+    <file>` invocation. One process, one API call, every row created
+    server-side. This is the courseware slide pattern and the right choice
+    when N is large.
+
+Both demos attach each host to the group **at creation** via the `groups`
+parameter (`add host ... groups.1 <name>`) rather than building the group with
+`members` afterwards. The group is created once and each host inserts itself
+into it — which sidesteps the fact that `add group` can't be re-run with
+`set-if-exists`. The hosts carry `set-if-exists` so they overwrite on re-run;
+the group does not, so delete the group in SmartConsole to re-run cleanly.
+
+To call native batch mode from your own script:
+
+```python
+from mgmt_api import LabAPIClient
+
+with LabAPIClient(host="10.1.1.101") as api:
+    # hosts.csv: header row of parameter names, one row per object
+    #   name,ip-address,color,groups.1
+    #   web-01,10.0.0.1,cyan,Web-Servers
+    #   web-02,10.0.0.2,cyan,Web-Servers
+    api.mgmt_cmd_batch("add host", "hosts.csv")
+```
+
+`mgmt_cmd_batch()` shares the same session, error reporting, and
+publish-every-80 behaviour as `mgmt_cmd()`; the whole batch counts as one
+change against the publish counter.
 
 ### Writing your own script
 
@@ -255,6 +301,7 @@ if not api.mgmt_cmd("add-host", {...}):
 | Bash (`bash_api_v4.sh`)        | Python (`mgmt_api.py`)                  |
 |--------------------------------|-----------------------------------------|
 | `mgmtCmd add host name ...`    | `api.mgmt_cmd("add-host", {...})`       |
+| `mgmt_cli add host --batch f`  | `api.mgmt_cmd_batch("add host", "f")`   |
 | `publish` function             | `api.publish()`                         |
 | `login` / `logout` functions   | `with LabAPIClient() as api:`           |
 | `publishEvery=80`              | `LabAPIClient(publish_every=80)`        |
@@ -300,10 +347,22 @@ SMS, the API moves to port 4434. Add a `--port 4434` arg to the mgmt_cli
 invocations in `mgmt_api.py`, or set it via the `CP_MGMT_HOST` shape.
 
 **`Failed: <command> ...` on a known-good command**
-Check the error message in parentheses. Most common causes: referenced
-object doesn't exist (typo or commands ran out of order), or the parameter
-isn't valid for that command in this R-version (e.g. `set-if-exists` isn't
-accepted on `add-group` in some R82 builds).
+Check the error message in parentheses — the toolkit surfaces the actual
+`errors[]` / `warnings[]` detail from mgmt_cli, not just the generic
+"Validation failed with 1 warning and 1 error" summary. Most common causes:
+the object already exists (`More than one object named '...' exists.` — delete
+it or use `set-if-exists`), a referenced object doesn't exist (typo or commands
+ran out of order), or the parameter isn't valid for that command in this
+R-version (e.g. `set-if-exists` is **not** accepted on `add-group` in any
+current build — create the group once and attach members at host creation via
+`groups` instead).
+
+**First connection prompts for / appears to hang on the fingerprint**
+On first contact with a management, mgmt_cli normally asks you to accept the
+API server's fingerprint. The toolkit passes `--unsafe-auto-accept true` at
+login so this is accepted automatically — appropriate for a disposable lab
+management. Do not carry that flag into scripts targeting a production SMS
+without verifying the fingerprint out of band first.
 
 **Connectivity check**
 From PowerShell on A-GUI:
