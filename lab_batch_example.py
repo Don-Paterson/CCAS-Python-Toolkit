@@ -26,8 +26,11 @@ hosts themselves use set-if-exists, so re-running overwrites them rather than
 erroring.
 
 Run:
-    py -3 lab_batch_example.py            # runs the loop demo
-    py -3 lab_batch_example.py --batch    # runs the native batch demo
+    py -3 lab_batch_example.py                  # loop demo (one add per host)
+    py -3 lab_batch_example.py --batch          # native --batch (generated CSV)
+    py -3 lab_batch_example.py --csv            # native --batch, your .\hosts.csv
+    py -3 lab_batch_example.py --csv my.csv     # native --batch, a named CSV
+    py -3 lab_batch_example.py --csv nets.csv --command "add network"
 """
 
 import argparse
@@ -101,6 +104,23 @@ def batch_demo(api: LabAPIClient) -> None:
             pass
 
 
+def csv_demo(api: LabAPIClient, csv_path: str, command: str) -> None:
+    """Use a CSV the user placed in the folder - no generation, no demo group.
+
+    The CSV is authoritative: its header row is the parameter names and each
+    row is one object. If rows reference a group via a `groups.1` column, that
+    group must already exist on the management (this demo does not create one).
+    """
+    if not os.path.isfile(csv_path):
+        print(f"CSV not found: {os.path.abspath(csv_path)}")
+        print("Place your CSV in this folder (or pass --csv <path>) and re-run.")
+        print("First row = parameter names, e.g.:  name,ip-address,color")
+        return
+
+    print(f"Using CSV: {os.path.abspath(csv_path)}")
+    api.mgmt_cmd_batch(command, csv_path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="CCAS bulk-creation demos")
     parser.add_argument(
@@ -108,10 +128,29 @@ def main() -> None:
         action="store_true",
         help="Use native mgmt_cli --batch CSV mode instead of the Python loop",
     )
+    parser.add_argument(
+        "--csv",
+        nargs="?",
+        const="hosts.csv",
+        default=None,
+        metavar="PATH",
+        help="Use a CSV you placed in the folder rather than a generated one. "
+             "Bare --csv looks for hosts.csv in the current directory; "
+             "--csv <path> uses a specific file.",
+    )
+    parser.add_argument(
+        "--command",
+        default="add host",
+        metavar="CMD",
+        help='mgmt_cli command to batch with --csv (default: "add host"). '
+             'Use e.g. "add network" for a networks CSV.',
+    )
     args = parser.parse_args()
 
     with LabAPIClient() as api:
-        if args.batch:
+        if args.csv is not None:
+            csv_demo(api, args.csv, args.command)
+        elif args.batch:
             batch_demo(api)
         else:
             loop_demo(api)

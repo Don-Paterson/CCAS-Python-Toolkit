@@ -46,6 +46,7 @@ import os
 import shutil
 import subprocess
 import sys
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -208,6 +209,7 @@ class LabAPIClient:
         self.change_count = 1
         self.publish_batch = 1
         self._session_file: Optional[str] = None
+        self.sid: Optional[str] = None   # session ID, populated at login()
 
     # ---- session lifecycle ----
 
@@ -268,6 +270,17 @@ class LabAPIClient:
         # to its session cookie file.
         with open(self._session_file, "w") as f:
             f.write(result.stdout)
+
+        # Capture the session ID as a variable for reference / reuse. The
+        # session file (used by -s on every later call) remains the working
+        # mechanism; self.sid is exposed so you can print it, log it, or feed
+        # it to mgmt_cli's MGMT_CLI_SESSION_ID env var elsewhere. The regex is
+        # format-tolerant - it matches both default output (sid: "...") and
+        # JSON (  "sid": "..."  ).
+        match = re.search(r'"?sid"?\s*[:=]\s*"?([^"\s,}]+)', result.stdout)
+        self.sid = match.group(1) if match else None
+        if self.sid:
+            print(f"Session ID (sid): {self.sid}")
 
         # Name and describe the session (setupSession in bash)
         self._run("set session", {
@@ -415,6 +428,7 @@ class LabAPIClient:
         return False, parsed
 
     def _cleanup_session_file(self) -> None:
+        self.sid = None
         if self._session_file is None:
             return
         try:
