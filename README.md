@@ -155,7 +155,8 @@ once. Both create a group, then 20 hosts attached to it.
 
 ```powershell
 py -3 lab_batch_example.py            # Python for-loop: one add per host
-py -3 lab_batch_example.py --batch    # native mgmt_cli --batch: one CSV, one call
+py -3 lab_batch_example.py --batch    # native mgmt_cli --batch: generated CSV
+py -3 lab_batch_example.py --csv      # native mgmt_cli --batch: your .\hosts.csv
 ```
 
 The two are **not** equivalent in cost:
@@ -192,11 +193,47 @@ with LabAPIClient(host="10.1.1.101") as api:
 publish-every-80 behaviour as `mgmt_cmd()`; the whole batch counts as one
 change against the publish counter.
 
+#### Using your own CSV (`--csv`)
+
+Instead of the generated file, you can drop a CSV into the folder and point the
+script at it. This skips both the CSV generation and the demo group — your file
+is authoritative.
+
+```powershell
+py -3 lab_batch_example.py --csv                       # uses .\hosts.csv
+py -3 lab_batch_example.py --csv mynets.csv            # a named file
+py -3 lab_batch_example.py --csv nets.csv --command "add network"
+```
+
+  - Bare `--csv` looks for `hosts.csv` in the current directory; `--csv <path>`
+    uses a specific file. If the file isn't found, the script prints where it
+    looked and the expected header format rather than erroring out.
+  - `--command` (default `add host`) sets the mgmt_cli command the CSV is fed
+    to, so the same path loads networks, services, etc. — `--command
+    "add network"` for a networks CSV.
+
+The CSV's first row is the parameter names; each following row is one object:
+
+```
+name,ip-address,color,groups.1
+web-01,10.0.0.1,cyan,Web-Servers
+web-02,10.0.0.2,cyan,Web-Servers
+```
+
+If a row references a group via `groups.1`, that group must already exist on
+the management — the `--csv` path does not create one (unlike the generated
+`--batch` demo, which makes its group first).
+
 ### Writing your own script
 
 Use `LabAPIClient` as a context manager. Every `mgmt_cmd()` call invokes
 `mgmt_cli` once under the hood. Publishes happen automatically every 80
 successful changes, and the context manager publishes and logs out on exit.
+
+After login the session ID is available as `api.sid` (and printed once at
+login). The session-file mechanism still does the work on every call; `api.sid`
+is exposed for reference — to log it, display it in the lab, or feed it to
+mgmt_cli's `MGMT_CLI_SESSION_ID` environment variable elsewhere.
 
 Minimal example:
 
@@ -204,6 +241,7 @@ Minimal example:
 from mgmt_api import LabAPIClient
 
 with LabAPIClient(host="10.1.1.101") as api:
+    print(api.sid)              # the live session ID
     api.mgmt_cmd("add-host", {
         "name":       "my-host",
         "ip-address": "1.2.3.4",
