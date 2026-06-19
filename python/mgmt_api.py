@@ -40,6 +40,7 @@ A .env file in the working directory is auto-loaded if python-dotenv is installe
 """
 
 import argparse
+import csv
 import getpass
 import json
 import os
@@ -369,7 +370,12 @@ class LabAPIClient:
         self._maybe_publish()
         return success
 
-    def mgmt_cmd_batch(self, command: str, csv_path: str) -> bool:
+    def mgmt_cmd_batch(
+        self,
+        command: str,
+        csv_path: str,
+        chunk_size: Optional[int] = None,
+    ) -> bool:
         """
         Run one mgmt_cli command in NATIVE batch mode against a CSV file.
 
@@ -377,27 +383,102 @@ class LabAPIClient:
             mgmt_cli -s <session> --format json <command> --batch <csv_path>
 
         The CSV's first row is the parameter names (e.g. name, ip-address,
-        color) and each subsequent row is one object. mgmt_cli creates every
-        row inside a SINGLE process / SINGLE API call - far cheaper than one
-        `add` per object when loading many.
+        color) and each subsequent row is one object. Running a CSV through one
+        `mgmt_cli --batch` call avoids the per-object process/TLS/session
+        overhead of one `add` per object. Note that mgmt_cli parses the CSV
+        locally and still issues one server-side add per row - the batch saving
+        is on the client side, not on A-SMS.
 
-        This is the toolkit equivalent of the courseware slide:
-            mgmt_cli add host --batch hosts-file.csv
+        Publish cadence: a single `mgmt_cli --batch` call commits nothing until
+        a publish, so a large CSV would otherwise pile up hundreds of
+        uncommitted changes in one session. To stay near Check Point's
+        best-practice of publishing around every ~100 changes, if the CSV has
+        more than `chunk_size` (default `publish_every`, 80) data rows it is
+        split into chunks of that size, each run as its own `--batch` call and
+        PUBLISHED before the next. So the session never holds more than
+        `chunk_size` uncommitted changes. The cost is one mgmt_cli process per
+        chunk (e.g. 4 for 300 rows at 80) - still far fewer than one per row.
 
-        The whole batch counts as one change against the publish counter.
-        Returns True on success, False on failure.
+        Returns True if every chunk succeeded, False otherwise.
         """
         csv_path = str(csv_path)
         if not Path(csv_path).is_file():
             print(f"Failed: {command} --batch {csv_path}  (CSV file not found)")
             return False
 
+        try:
+            with open(csv_path, newline="", encoding="utf-8") as f:
+                all_rows = list(csv.reader(f))
+        except OSError as e:
+            print(f"Failed: {command} --batch {csv_path}  (cannot read CSV: {e})")
+            return False
+
+        if len(all_rows) < 2:
+            print(f"Failed: {command} --batch {csv_path}  (CSV has no data rows)")
+            return False
+
+        header = all_rows[0]
+        data = [r for r in all_rows[1:] if r and any(c.strip() for c in r)]
+        if not data:
+            print(f"Failed: {command} --batch {csv_path}  (CSV has no data rows)")
+            return False
+
+        chunk = chunk_size or self.publish_every
+
+        # Fits in one batch - run as-is, integrate with the normal counter.
+        if len(data) <= chunk:
+            ok = self._batch_file(command, csv_path, len(data))
+            self._maybe_publish()
+            return ok
+
+        # Too big - split into chunks, publishing between each.
+        total = len(data)
+        n_chunks = (total + chunk - 1) // chunk
+        print(
+            f"{total} rows exceeds publish_every ({chunk}); splitting into "
+            f"{n_chunks} chunks and publishing between each "
+            f"(keeps uncommitted changes near the ~100 best practice)."
+        )
+
+        overall_ok = True
+        for idx, start in enumerate(range(0, total, chunk), start=1):
+            part = data[start:start + chunk]
+            fd, part_path = tempfile.mkstemp(prefix="cpbatch_", suffix=".csv")
+            try:
+                with os.fdopen(fd, "w", newline="", encoding="utf-8") as cf:
+                    writer = csv.writer(cf)
+                    writer.writerow(header)
+                    writer.writerows(part)
+                print(f"  chunk {idx}/{n_chunks}: rows {start + 1}-{start + len(part)} of {total}")
+                ok = self._batch_file(command, part_path, len(part))
+                overall_ok = overall_ok and ok
+            finally:
+                try:
+                    os.remove(part_path)
+                except OSError:
+                    pass
+
+            # Publish this chunk before the next, keeping the session small,
+            # then roll over to the next publish-batch.
+            try:
+                self.publish()
+            except Exception as e:
+                print(f"  publish after chunk {idx} failed: {e}")
+            self.publish_batch += 1
+            self.change_count = 1
+
+        return overall_ok
+
+    def _batch_file(self, command: str, csv_path: str, row_count: int) -> bool:
+        """Run one `--batch` call on a single CSV file. Prints success/failure
+        with per-row error detail; increments the change counter by one batch
+        operation. Publishing is handled by the caller."""
         success, parsed = self._run(
-            command, {}, quiet=True, extra_args=["--batch", csv_path]
+            command, {}, quiet=True, extra_args=["--batch", str(csv_path)]
         )
 
         if success:
-            print(f"Success (batch) {self.publish_batch}.{self.change_count}")
+            print(f"Success (batch) {self.publish_batch}.{self.change_count}  ({row_count} rows)")
             self.change_count += 1
         else:
             err = _extract_detail(parsed)
@@ -409,9 +490,8 @@ class LabAPIClient:
                     or (self._last_result.stderr or "").strip()
                 if raw:
                     err = raw if len(raw) <= 1500 else raw[:1500] + " ...(truncated)"
-            print(f"Failed: {command} --batch {csv_path}  ({err or 'unknown error'})")
+            print(f"Failed: {command} --batch  ({err or 'unknown error'})")
 
-        self._maybe_publish()
         return success
 
     # ---- internal helpers ----
