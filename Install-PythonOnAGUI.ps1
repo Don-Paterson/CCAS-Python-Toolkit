@@ -91,6 +91,28 @@ function Install-PipPackages {
     py -3 -m pip install --upgrade python-dotenv
 }
 
+function Add-DirToMachinePath {
+    param([string]$Dir)
+
+    $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+    $alreadyThere = $machinePath -split ';' | Where-Object { $_.TrimEnd('\') -eq $Dir.TrimEnd('\') }
+
+    if ($alreadyThere) {
+        Write-Host "Already on machine PATH: $Dir" -ForegroundColor Green
+        return
+    }
+
+    $newMachinePath = "$machinePath;$Dir"
+    [System.Environment]::SetEnvironmentVariable("Path", $newMachinePath, "Machine")
+    Write-Host "Added to machine PATH (persists across sessions): $Dir" -ForegroundColor Green
+
+    # Also extend PATH for the current session so mgmt_cli.exe is usable
+    # immediately, without requiring a new shell/reboot.
+    if (($env:Path -split ';') -notcontains $Dir) {
+        $env:Path = "$env:Path;$Dir"
+    }
+}
+
 function Find-MgmtCli {
     Write-Section "Locating mgmt_cli.exe (ships with SmartConsole)"
 
@@ -107,10 +129,14 @@ function Find-MgmtCli {
         if ($hits) {
             $found = $hits[0]
             Write-Host "Found at:  $($found.FullName)" -ForegroundColor Green
-            Write-Host ""
-            Write-Host "Not on PATH. Either add this directory to PATH:" -ForegroundColor Yellow
-            Write-Host "  $($found.DirectoryName)" -ForegroundColor Yellow
-            Write-Host "...or set CP_MGMT_CLI to the full executable path in your .env" -ForegroundColor Yellow
+
+            try {
+                Add-DirToMachinePath -Dir $found.DirectoryName
+            } catch {
+                Write-Warning "Could not update machine PATH automatically: $_"
+                Write-Warning "Add this directory to PATH manually, or set CP_MGMT_CLI in your .env:"
+                Write-Warning "  $($found.DirectoryName)"
+            }
             return
         }
     }
