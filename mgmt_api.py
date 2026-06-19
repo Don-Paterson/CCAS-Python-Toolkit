@@ -311,6 +311,50 @@ class LabAPIClient:
             self.change_count += 1
         # Failure message is printed inside _run when quiet=False.
 
+        self._maybe_publish()
+        return success
+
+    def mgmt_cmd_batch(self, command: str, csv_path: str) -> bool:
+        """
+        Run one mgmt_cli command in NATIVE batch mode against a CSV file.
+
+        Equivalent to:
+            mgmt_cli -s <session> --format json <command> --batch <csv_path>
+
+        The CSV's first row is the parameter names (e.g. name, ip-address,
+        color) and each subsequent row is one object. mgmt_cli creates every
+        row inside a SINGLE process / SINGLE API call - far cheaper than one
+        `add` per object when loading many.
+
+        This is the toolkit equivalent of the courseware slide:
+            mgmt_cli add host --batch hosts-file.csv
+
+        The whole batch counts as one change against the publish counter.
+        Returns True on success, False on failure.
+        """
+        csv_path = str(csv_path)
+        if not Path(csv_path).is_file():
+            print(f"Failed: {command} --batch {csv_path}  (CSV file not found)")
+            return False
+
+        success, parsed = self._run(
+            command, {}, quiet=True, extra_args=["--batch", csv_path]
+        )
+
+        if success:
+            print(f"Success (batch) {self.publish_batch}.{self.change_count}")
+            self.change_count += 1
+        else:
+            err = _extract_detail(parsed) or "see mgmt_cli output above"
+            print(f"Failed: {command} --batch {csv_path}  ({err})")
+
+        self._maybe_publish()
+        return success
+
+    # ---- internal helpers ----
+
+    def _maybe_publish(self) -> None:
+        """Auto-publish (and re-name the session) every `publish_every` changes."""
         if self.change_count > self.publish_every:
             print("Publishing...")
             self.publish()
@@ -321,15 +365,12 @@ class LabAPIClient:
             self.change_count = 1
             self.publish_batch += 1
 
-        return success
-
-    # ---- internal helpers ----
-
     def _run(
         self,
         command: str,
         payload: Dict[str, Any],
         quiet: bool = False,
+        extra_args: Optional[List[str]] = None,
     ) -> Tuple[bool, dict]:
         """
         Execute one mgmt_cli call against the active session.
@@ -339,7 +380,8 @@ class LabAPIClient:
 
         The command string is tokenised on whitespace, so both "add host" and
         "add-host" expand correctly. Global flags (-s, --format) come BEFORE
-        the subcommand tokens, then payload args.
+        the subcommand tokens, then payload args. `extra_args` (if given) are
+        appended last - used by mgmt_cmd_batch() to add `--batch <csv>`.
         """
         if self._session_file is None:
             raise RuntimeError("Not logged in")
@@ -347,6 +389,8 @@ class LabAPIClient:
         cmd = [self.mgmt_cli, "-s", self._session_file, "--format", "json"]
         cmd.extend(command.split())
         cmd.extend(_payload_to_args(payload))
+        if extra_args:
+            cmd.extend(extra_args)
 
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
