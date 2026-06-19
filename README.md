@@ -4,6 +4,8 @@ A Python equivalent of `bash_api.sh` for the Check Point Certified Automation
 Specialist (CCAS) lab, designed to run from the **A-GUI** Windows VM rather
 than from the A-SMS expert shell.
 
+THIS IS FOR LAB TESTING ONLY. 
+
 ## What this is
 
 `bash_api.sh` (and its `bash_api_v4.sh` evolution in this repo) is a thin bash
@@ -159,7 +161,7 @@ py -3 lab_batch_example.py --batch    # native mgmt_cli --batch: one CSV, one ca
 The two are **not** equivalent in cost:
 
   - **The loop** calls `mgmt_cmd("add host", {...})` once per object. It's the
-    readable, courseware-friendly translation of a bash `while` loop, but it's
+    readable friendly translation of a bash `while` loop, but it's
     still one `mgmt_cli.exe` process and one API call per host.
   - **`--batch`** hands a whole CSV to a single `mgmt_cli add host --batch
     <file>` invocation. One process, one API call, every row created
@@ -373,7 +375,7 @@ Test-NetConnection 10.1.1.101 -Port 443
 
 ## Notes
 
-  - Designed for Skillable A-GUI (Hyper-V, Intel Xeon Gold 6330, x86-64);
+  - Designed for CCAS lab A-GUI;
     the installer downloads the amd64 Python build accordingly.
   - The bash-side companion `bash_api_v4.sh` is included in this repo for
     cross-reference and for tasks that still need to run on A-SMS itself.
