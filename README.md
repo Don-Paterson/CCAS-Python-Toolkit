@@ -198,9 +198,18 @@ with LabAPIClient(host="10.1.1.101") as api:
 
 `mgmt_cmd_batch()` shares the same session, error reporting (per-row detail on
 failure, including the line number when mgmt_cli reports one), and
-publish-every-80 behaviour as `mgmt_cmd()`. The whole batch is treated as a
-single change against the toolkit's publish counter, even though mgmt_cli
-issues one server-side add per row.
+publish-every-80 behaviour as `mgmt_cmd()`.
+
+Publish cadence matters here: a single `mgmt_cli --batch` call commits nothing
+until a publish, so a large CSV would pile up hundreds of uncommitted changes
+in one session — against Check Point's best practice of publishing around every
+~100 changes. So if the CSV has more than `publish_every` (default 80) data
+rows, `mgmt_cmd_batch()` automatically splits it into chunks of that size, runs
+each as its own `--batch` call, and publishes before the next. The session
+never holds more than `publish_every` uncommitted changes. A 300-row CSV
+therefore runs as four chunks (80/80/80/60) with a publish after each — four
+mgmt_cli processes instead of one, but still far fewer than one per row. CSVs at
+or under `publish_every` run as a single batch with no chunking.
 
 #### Using your own CSV (`--csv`)
 
