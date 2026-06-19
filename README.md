@@ -159,15 +159,22 @@ py -3 lab_batch_example.py --batch    # native mgmt_cli --batch: generated CSV
 py -3 lab_batch_example.py --csv      # native mgmt_cli --batch: your .\hosts.csv
 ```
 
-The two are **not** equivalent in cost:
+The two are **not** equivalent in cost — but the difference is narrower than
+it first appears:
 
   - **The loop** calls `mgmt_cmd("add host", {...})` once per object. It's the
-    readable friendly translation of a bash `while` loop, but it's
-    still one `mgmt_cli.exe` process and one API call per host.
+    readable friendly translation of a bash `while` loop, but each call is a
+    separate `mgmt_cli.exe` process — its own startup, TLS handshake, and
+    session lookup — on top of the API call itself.
   - **`--batch`** hands a whole CSV to a single `mgmt_cli add host --batch
-    <file>` invocation. One process, one API call, every row created
-    server-side. This is the courseware slide pattern and the right choice
-    when N is large.
+    <file>` invocation. The saving is on the **client side**: one process, one
+    session, one publish, instead of N. On the **A-SMS side it is not one bulk
+    operation** — `mgmt_cli` parses the CSV locally and still sends one
+    `POST /web_api/add-host` per row, so 300 hosts is 300 server-side add-host
+    operations hitting the API server and validation engine (visible in
+    `$FWDIR/log/api.elg`). The win is eliminating N× process/TLS/session
+    overhead and orchestration, not collapsing the work the management does.
+    It's the courseware slide pattern and the right choice when N is large.
 
 Both demos attach each host to the group **at creation** via the `groups`
 parameter (`add host ... groups.1 <name>`) rather than building the group with
@@ -189,9 +196,11 @@ with LabAPIClient(host="10.1.1.101") as api:
     api.mgmt_cmd_batch("add host", "hosts.csv")
 ```
 
-`mgmt_cmd_batch()` shares the same session, error reporting, and
-publish-every-80 behaviour as `mgmt_cmd()`; the whole batch counts as one
-change against the publish counter.
+`mgmt_cmd_batch()` shares the same session, error reporting (per-row detail on
+failure, including the line number when mgmt_cli reports one), and
+publish-every-80 behaviour as `mgmt_cmd()`. The whole batch is treated as a
+single change against the toolkit's publish counter, even though mgmt_cli
+issues one server-side add per row.
 
 #### Using your own CSV (`--csv`)
 
