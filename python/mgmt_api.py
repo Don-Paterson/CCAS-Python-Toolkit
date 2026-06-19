@@ -147,35 +147,76 @@ def _payload_to_args(payload: Dict[str, Any]) -> List[str]:
 # Error/warning detail extraction
 # ---------------------------------------------------------------------------
 
-def _extract_detail(parsed: dict) -> str:
+def _extract_detail(parsed: Any) -> str:
     """
-    Pull the real, actionable detail out of an mgmt_cli JSON response.
+    Recursively pull the real, actionable detail out of an mgmt_cli response.
 
-    mgmt_cli's top-level "message" is usually just a generic sentence like
-    "Validation failed with 1 warning and 1 error" - the actual reason lives
-    in the "errors" / "warnings" arrays, each entry of which has its own
-    "message" field. This walks those arrays (and "blocking-errors" too,
-    seen on some commands) and joins everything into one readable string.
+    mgmt_cli's top-level "message" is usually generic ("Validation failed with
+    1 warning and 1 error"); the actual reasons live in "errors" / "warnings"
+    arrays, each entry of which has its own "message" field.
+
+    For a single command those arrays sit at the top level. For a `--batch`
+    run the response is per-row - a JSON list, or nested per-line objects - so
+    a flat top-level scan misses them entirely (this is what produced the
+    unhelpful "see mgmt_cli output above"). This walks the whole structure,
+    collects every error / warning message, tags each with a line number when
+    the response carries one, de-duplicates, and caps the output so a failed
+    300-row batch reports the distinct reasons rather than a wall of identical
+    lines.
     """
-    parts: List[str] = []
+    messages: List[str] = []
 
-    top_message = parsed.get("message")
+    def walk(node: Any, line_ctx: Optional[str]) -> None:
+        if isinstance(node, dict):
+            ctx = line_ctx
+            for id_key in ("line", "line-number", "row"):
+                val = node.get(id_key)
+                if isinstance(val, (int, str)):
+                    ctx = f"line {val}"
+                    break
 
-    for key in ("errors", "blocking-errors", "warnings"):
-        items = parsed.get(key)
-        if not items:
-            continue
-        label = key.replace("-", " ").rstrip("s").title()
-        for item in items:
-            if isinstance(item, dict):
-                msg = item.get("message") or json.dumps(item)
-            else:
-                msg = str(item)
-            parts.append(f"{label}: {msg}")
+            for key in ("errors", "blocking-errors", "warnings"):
+                items = node.get(key)
+                if isinstance(items, list):
+                    label = key.replace("-", " ").rstrip("s").title()
+                    for item in items:
+                        if isinstance(item, dict):
+                            msg = item.get("message") or json.dumps(item)
+                        else:
+                            msg = str(item)
+                        prefix = f"[{ctx}] " if ctx else ""
+                        messages.append(f"{prefix}{label}: {msg}")
 
-    if parts:
-        return "; ".join(parts)
-    return top_message or ""
+            for key, value in node.items():
+                if key in ("errors", "blocking-errors", "warnings"):
+                    continue
+                if isinstance(value, (dict, list)):
+                    walk(value, ctx)
+
+        elif isinstance(node, list):
+            for element in node:
+                walk(element, line_ctx)
+
+    walk(parsed, None)
+
+    if messages:
+        # De-duplicate (identical reason across many rows) while preserving
+        # order, then cap so the printed line stays readable.
+        seen = set()
+        unique: List[str] = []
+        for m in messages:
+            if m not in seen:
+                seen.add(m)
+                unique.append(m)
+        cap = 20
+        out = "; ".join(unique[:cap])
+        if len(unique) > cap:
+            out += f"; ... (+{len(unique) - cap} more)"
+        return out
+
+    if isinstance(parsed, dict):
+        return parsed.get("message", "") or ""
+    return ""
 
 
 
@@ -210,6 +251,7 @@ class LabAPIClient:
         self.publish_batch = 1
         self._session_file: Optional[str] = None
         self.sid: Optional[str] = None   # session ID, populated at login()
+        self._last_result = None         # raw CompletedProcess of the last _run
 
     # ---- session lifecycle ----
 
@@ -358,8 +400,16 @@ class LabAPIClient:
             print(f"Success (batch) {self.publish_batch}.{self.change_count}")
             self.change_count += 1
         else:
-            err = _extract_detail(parsed) or "see mgmt_cli output above"
-            print(f"Failed: {command} --batch {csv_path}  ({err})")
+            err = _extract_detail(parsed)
+            if not err and self._last_result is not None:
+                # No structured detail (non-JSON or unexpected shape) - show the
+                # raw mgmt_cli output instead of pointing at output that isn't
+                # there. Bound it so a huge batch failure stays readable.
+                raw = (self._last_result.stdout or "").strip() \
+                    or (self._last_result.stderr or "").strip()
+                if raw:
+                    err = raw if len(raw) <= 1500 else raw[:1500] + " ...(truncated)"
+            print(f"Failed: {command} --batch {csv_path}  ({err or 'unknown error'})")
 
         self._maybe_publish()
         return success
@@ -406,6 +456,7 @@ class LabAPIClient:
             cmd.extend(extra_args)
 
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        self._last_result = result
 
         parsed: dict = {}
         if result.stdout.strip():
