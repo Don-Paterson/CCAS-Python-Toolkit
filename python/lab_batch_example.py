@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 Bulk-creation examples for the CCAS Python Toolkit.
 
 Shows the two ways to create many objects at once, so you can compare them:
