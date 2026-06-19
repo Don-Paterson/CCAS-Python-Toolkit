@@ -46,6 +46,7 @@ import os
 import shutil
 import subprocess
 import sys
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -143,8 +144,40 @@ def _payload_to_args(payload: Dict[str, Any]) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# Client
+# Error/warning detail extraction
 # ---------------------------------------------------------------------------
+
+def _extract_detail(parsed: dict) -> str:
+    """
+    Pull the real, actionable detail out of an mgmt_cli JSON response.
+
+    mgmt_cli's top-level "message" is usually just a generic sentence like
+    "Validation failed with 1 warning and 1 error" - the actual reason lives
+    in the "errors" / "warnings" arrays, each entry of which has its own
+    "message" field. This walks those arrays (and "blocking-errors" too,
+    seen on some commands) and joins everything into one readable string.
+    """
+    parts: List[str] = []
+
+    top_message = parsed.get("message")
+
+    for key in ("errors", "blocking-errors", "warnings"):
+        items = parsed.get(key)
+        if not items:
+            continue
+        label = key.replace("-", " ").rstrip("s").title()
+        for item in items:
+            if isinstance(item, dict):
+                msg = item.get("message") or json.dumps(item)
+            else:
+                msg = str(item)
+            parts.append(f"{label}: {msg}")
+
+    if parts:
+        return "; ".join(parts)
+    return top_message or ""
+
+
 
 class LabAPIClient:
     """
@@ -176,6 +209,7 @@ class LabAPIClient:
         self.change_count = 1
         self.publish_batch = 1
         self._session_file: Optional[str] = None
+        self.sid: Optional[str] = None   # session ID, populated at login()
 
     # ---- session lifecycle ----
 
@@ -196,7 +230,18 @@ class LabAPIClient:
         # Global flags (--management, -d) before the subcommand, matching the
         # courseware:
         #     mgmt_cli --format json --management "10.1.1.101" login api-key "..."
-        cmd = [self.mgmt_cli, "--management", self.host]
+        #
+        # --unsafe-auto-accept true is required here: on first connection to
+        # a management, mgmt_cli.exe prompts interactively to accept the API
+        # fingerprint (the same prompt SmartConsole shows on first login).
+        # Because login() runs with capture_output=True, stdin isn't attached
+        # to a terminal, so that prompt can never be answered - the process
+        # blocks forever instead of failing, which looks like a hang. This
+        # flag is the documented way to skip that prompt for automation
+        # (see Check Point CheckMates). It is appropriate for disposable lab
+        # managements; do not carry this flag into scripts that target a
+        # production SMS without verifying the fingerprint out of band first.
+        cmd = [self.mgmt_cli, "--management", self.host, "--unsafe-auto-accept", "true"]
         if self.domain:
             cmd.extend(["-d", self.domain])
         cmd.append("login")
@@ -225,6 +270,17 @@ class LabAPIClient:
         # to its session cookie file.
         with open(self._session_file, "w") as f:
             f.write(result.stdout)
+
+        # Capture the session ID as a variable for reference / reuse. The
+        # session file (used by -s on every later call) remains the working
+        # mechanism; self.sid is exposed so you can print it, log it, or feed
+        # it to mgmt_cli's MGMT_CLI_SESSION_ID env var elsewhere. The regex is
+        # format-tolerant - it matches both default output (sid: "...") and
+        # JSON (  "sid": "..."  ).
+        match = re.search(r'"?sid"?\s*[:=]\s*"?([^"\s,}]+)', result.stdout)
+        self.sid = match.group(1) if match else None
+        if self.sid:
+            print(f"Session ID (sid): {self.sid}")
 
         # Name and describe the session (setupSession in bash)
         self._run("set session", {
@@ -268,6 +324,50 @@ class LabAPIClient:
             self.change_count += 1
         # Failure message is printed inside _run when quiet=False.
 
+        self._maybe_publish()
+        return success
+
+    def mgmt_cmd_batch(self, command: str, csv_path: str) -> bool:
+        """
+        Run one mgmt_cli command in NATIVE batch mode against a CSV file.
+
+        Equivalent to:
+            mgmt_cli -s <session> --format json <command> --batch <csv_path>
+
+        The CSV's first row is the parameter names (e.g. name, ip-address,
+        color) and each subsequent row is one object. mgmt_cli creates every
+        row inside a SINGLE process / SINGLE API call - far cheaper than one
+        `add` per object when loading many.
+
+        This is the toolkit equivalent of the courseware slide:
+            mgmt_cli add host --batch hosts-file.csv
+
+        The whole batch counts as one change against the publish counter.
+        Returns True on success, False on failure.
+        """
+        csv_path = str(csv_path)
+        if not Path(csv_path).is_file():
+            print(f"Failed: {command} --batch {csv_path}  (CSV file not found)")
+            return False
+
+        success, parsed = self._run(
+            command, {}, quiet=True, extra_args=["--batch", csv_path]
+        )
+
+        if success:
+            print(f"Success (batch) {self.publish_batch}.{self.change_count}")
+            self.change_count += 1
+        else:
+            err = _extract_detail(parsed) or "see mgmt_cli output above"
+            print(f"Failed: {command} --batch {csv_path}  ({err})")
+
+        self._maybe_publish()
+        return success
+
+    # ---- internal helpers ----
+
+    def _maybe_publish(self) -> None:
+        """Auto-publish (and re-name the session) every `publish_every` changes."""
         if self.change_count > self.publish_every:
             print("Publishing...")
             self.publish()
@@ -278,15 +378,12 @@ class LabAPIClient:
             self.change_count = 1
             self.publish_batch += 1
 
-        return success
-
-    # ---- internal helpers ----
-
     def _run(
         self,
         command: str,
         payload: Dict[str, Any],
         quiet: bool = False,
+        extra_args: Optional[List[str]] = None,
     ) -> Tuple[bool, dict]:
         """
         Execute one mgmt_cli call against the active session.
@@ -296,7 +393,8 @@ class LabAPIClient:
 
         The command string is tokenised on whitespace, so both "add host" and
         "add-host" expand correctly. Global flags (-s, --format) come BEFORE
-        the subcommand tokens, then payload args.
+        the subcommand tokens, then payload args. `extra_args` (if given) are
+        appended last - used by mgmt_cmd_batch() to add `--batch <csv>`.
         """
         if self._session_file is None:
             raise RuntimeError("Not logged in")
@@ -304,6 +402,8 @@ class LabAPIClient:
         cmd = [self.mgmt_cli, "-s", self._session_file, "--format", "json"]
         cmd.extend(command.split())
         cmd.extend(_payload_to_args(payload))
+        if extra_args:
+            cmd.extend(extra_args)
 
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
@@ -319,7 +419,7 @@ class LabAPIClient:
 
         if not quiet:
             err = (
-                parsed.get("message")
+                _extract_detail(parsed)
                 or result.stderr.strip()
                 or result.stdout.strip()
                 or f"exit {result.returncode}"
@@ -328,6 +428,7 @@ class LabAPIClient:
         return False, parsed
 
     def _cleanup_session_file(self) -> None:
+        self.sid = None
         if self._session_file is None:
             return
         try:
