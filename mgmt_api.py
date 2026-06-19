@@ -143,8 +143,40 @@ def _payload_to_args(payload: Dict[str, Any]) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# Client
+# Error/warning detail extraction
 # ---------------------------------------------------------------------------
+
+def _extract_detail(parsed: dict) -> str:
+    """
+    Pull the real, actionable detail out of an mgmt_cli JSON response.
+
+    mgmt_cli's top-level "message" is usually just a generic sentence like
+    "Validation failed with 1 warning and 1 error" - the actual reason lives
+    in the "errors" / "warnings" arrays, each entry of which has its own
+    "message" field. This walks those arrays (and "blocking-errors" too,
+    seen on some commands) and joins everything into one readable string.
+    """
+    parts: List[str] = []
+
+    top_message = parsed.get("message")
+
+    for key in ("errors", "blocking-errors", "warnings"):
+        items = parsed.get(key)
+        if not items:
+            continue
+        label = key.replace("-", " ").rstrip("s").title()
+        for item in items:
+            if isinstance(item, dict):
+                msg = item.get("message") or json.dumps(item)
+            else:
+                msg = str(item)
+            parts.append(f"{label}: {msg}")
+
+    if parts:
+        return "; ".join(parts)
+    return top_message or ""
+
+
 
 class LabAPIClient:
     """
@@ -330,7 +362,7 @@ class LabAPIClient:
 
         if not quiet:
             err = (
-                parsed.get("message")
+                _extract_detail(parsed)
                 or result.stderr.strip()
                 or result.stdout.strip()
                 or f"exit {result.returncode}"
